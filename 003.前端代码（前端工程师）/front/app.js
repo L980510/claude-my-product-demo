@@ -1,49 +1,9 @@
 /* ===== 消费记账 · V1 主逻辑 =====
- * 数据存于 localStorage（V1 简化，后续可迁 IndexedDB）
+ * 数据通过后端 API 存取（JWT 鉴权），本地仅保留 token
  * 金额统一以「分」为整数存储
  */
 
 // ===== 常量 =====
-const TEMPLATES = {
-  personal: {
-    expense: [
-      { name: '餐饮', icon: '🍜', color: '#E8577F' },
-      { name: '交通', icon: '🚌', color: '#A05AD9' },
-      { name: '购物', icon: '🛍️', color: '#F28A3E' },
-      { name: '居住', icon: '🏠', color: '#35A87C' },
-      { name: '娱乐', icon: '🎮', color: '#D9A81E' },
-      { name: '医疗', icon: '💊', color: '#3F91D6' },
-      { name: '教育', icon: '📚', color: '#C14B86' },
-      { name: '人情', icon: '🎁', color: '#82B440' },
-      { name: '其他', icon: '📦', color: '#7B6CC0' }
-    ],
-    income: [
-      { name: '工资', icon: '💰', color: '#35A87C' },
-      { name: '奖金', icon: '🎉', color: '#82B440' },
-      { name: '理财', icon: '📈', color: '#3F91D6' },
-      { name: '红包', icon: '🧧', color: '#E8577F' },
-      { name: '其他', icon: '📦', color: '#7B6CC0' }
-    ]
-  },
-  business: {
-    expense: [
-      { name: '进货采购', icon: '📦', color: '#E8577F' },
-      { name: '房租', icon: '🏪', color: '#A05AD9' },
-      { name: '水电', icon: '💡', color: '#F28A3E' },
-      { name: '人工', icon: '👥', color: '#35A87C' },
-      { name: '物流', icon: '🚚', color: '#D9A81E' },
-      { name: '耗材', icon: '🧾', color: '#3F91D6' },
-      { name: '税费', icon: '🧮', color: '#C14B86' },
-      { name: '其他', icon: '📦', color: '#7B6CC0' }
-    ],
-    income: [
-      { name: '销售收入', icon: '🛒', color: '#35A87C' },
-      { name: '服务收入', icon: '🛠️', color: '#3F91D6' },
-      { name: '其他', icon: '📦', color: '#7B6CC0' }
-    ]
-  }
-};
-
 const EMOJIS = ['🍜','🚌','🛍️','🏠','🎮','💊','📚','🎁','📦','💰','🎉','📈','🧧','🏪','💡','👥','🚚','🧾','🧮','🛒','🛠️','☕','🍔','🚗','🐱','✈️','🎬','💄','🏋️','🐶'];
 const COLORS = ['#E8577F','#A05AD9','#F28A3E','#35A87C','#D9A81E','#3F91D6','#C14B86','#82B440','#7B6CC0','#FF9EB5','#F4719A','#FFC9A9'];
 
@@ -52,38 +12,18 @@ const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 // ===== 工具 =====
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-const LS = { settings: 'xjz_settings', categories: 'xjz_categories', records: 'xjz_records' };
-
-// 用户数据按账号隔离；activeUserId 为空表示未登录
-let activeUserId = null;
-function scopeKey(base) { return activeUserId ? base + '_' + activeUserId : base; }
-function load(key, fb) { try { const v = localStorage.getItem(scopeKey(key)); return v ? JSON.parse(v) : fb; } catch (e) { return fb; } }
-function save(key, val) { localStorage.setItem(scopeKey(key), JSON.stringify(val)); }
-
-// 账号表与会话：全局，不按账号拆分（演示用，哈希仅为模拟，非真实安全）
-function getUsers() { try { return JSON.parse(localStorage.getItem('xjz_users')) || []; } catch (e) { return []; } }
-function saveUsers(u) { localStorage.setItem('xjz_users', JSON.stringify(u)); }
-function getSession() { try { return JSON.parse(localStorage.getItem('xjz_session') || sessionStorage.getItem('xjz_session')); } catch (e) { return null; } }
-function setSession(user, remember) { (remember ? localStorage : sessionStorage).setItem('xjz_session', JSON.stringify({ id: user.id, username: user.username })); }
-function clearSession() { localStorage.removeItem('xjz_session'); sessionStorage.removeItem('xjz_session'); }
-function hashPwd(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return 'h' + h.toString(36); }
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function fmtDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function todayStr() { return fmtDate(new Date()); }
 function monthKey(s) { return s.slice(0, 7); }
 function ymd(dstr) { const p = dstr.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
 function toFen(str) { const n = parseFloat(str); return isNaN(n) ? 0 : Math.round(n * 100); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
 
-// ===== 状态 =====
-let settings = null;
+// ===== 状态（内存，来自后端） =====
+let currentUser = null;  // {id, username, scene, lastExpenseCategoryId, lastIncomeCategoryId}
 let categories = [];
 let records = [];
-
-function loadUserData() {
-  settings = load(LS.settings, null);
-  categories = load(LS.categories, []);
-  records = load(LS.records, []);
-}
+let budget = null;       // {id, month, amount} 或 null
 
 let homeType = 'expense';
 let selectedCatId = null;
@@ -97,16 +37,8 @@ let catModalType = 'expense';
 let catModalEmoji = '📦';
 let catModalColor = '#FF9EB5';
 
-// ===== 分类模板 =====
-function buildTemplate(scene) {
-  const cats = [];
-  let sort = 0;
-  ['expense', 'income'].forEach((type) => {
-    TEMPLATES[scene][type].forEach((c) => {
-      cats.push({ id: uid(), name: c.name, type, icon: c.icon, color: c.color, sort: sort++, isSystem: true });
-    });
-  });
-  return cats;
+function lastCatId(type) {
+  return currentUser ? (type === 'expense' ? currentUser.lastExpenseCategoryId : currentUser.lastIncomeCategoryId) : null;
 }
 
 // ===== Toast =====
@@ -135,14 +67,19 @@ function renderHome() {
   const type = homeType;
   const cats = categories.filter((c) => c.type === type).sort((a, b) => a.sort - b.sort);
   if (!cats.find((c) => c.id === selectedCatId)) {
-    selectedCatId = (settings && settings.lastCat && settings.lastCat[type] && cats.find((c) => c.id === settings.lastCat[type]))
-      ? settings.lastCat[type] : (cats[0] ? cats[0].id : null);
+    const last = lastCatId(type);
+    selectedCatId = (last && cats.find((c) => c.id === last)) ? last : (cats[0] ? cats[0].id : null);
   }
+  $('#category-count').textContent = `${type === 'expense' ? '支出' : '收入'} · ${cats.length} 个分类`;
   renderCategoryGrid($('#category-grid'), cats, selectedCatId, (id) => { selectedCatId = id; });
 }
 
 function renderCategoryGrid(container, cats, selectedId, onSelect) {
   container.innerHTML = '';
+  if (cats.length === 0) {
+    container.innerHTML = '<div class="empty-hint">暂无分类，去「我的 → 分类管理」添加</div>';
+    return;
+  }
   cats.forEach((c) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -153,7 +90,7 @@ function renderCategoryGrid(container, cats, selectedId, onSelect) {
   });
 }
 
-function saveRecord() {
+async function saveRecord() {
   const raw = $('#amount-input').value.trim();
   if (!raw) { toast('请输入金额'); return; }
   let amountPart = raw, notePart = $('#note-input').value.trim();
@@ -166,22 +103,23 @@ function saveRecord() {
   if (fen <= 0 || fen > 999999999) { toast('请输入有效金额'); return; }
   if (!selectedCatId) { toast('请选择分类'); return; }
 
-  records.push({
-    id: uid(), type: homeType, amount: fen, categoryId: selectedCatId,
-    note: notePart.slice(0, 50), date: $('#date-input').value || todayStr(), createdAt: Date.now()
-  });
-  save(LS.records, records);
+  try {
+    const r = await http.post('/records', {
+      type: homeType, amount: fen, categoryId: selectedCatId,
+      note: notePart.slice(0, 50), date: $('#date-input').value || todayStr()
+    });
+    records.push(r);
+    if (homeType === 'expense') currentUser.lastExpenseCategoryId = selectedCatId;
+    else currentUser.lastIncomeCategoryId = selectedCatId;
 
-  settings.lastCat[homeType] = selectedCatId;
-  save(LS.settings, settings);
-
-  $('#amount-input').value = '';
-  $('#note-input').value = '';
-  const btn = $('#save-btn');
-  btn.classList.add('pop');
-  setTimeout(() => btn.classList.remove('pop'), 300);
-  toast('已记录 ✓');
-  $('#amount-input').focus();
+    $('#amount-input').value = '';
+    $('#note-input').value = '';
+    const btn = $('#save-btn');
+    btn.classList.add('pop');
+    setTimeout(() => btn.classList.remove('pop'), 300);
+    toast('已记录 ✓');
+    $('#amount-input').focus();
+  } catch (e) { toast(e.message); }
 }
 
 // ===== 账单 =====
@@ -190,7 +128,7 @@ function renderBills() {
 
   const monthRecords = records
     .filter((r) => monthKey(r.date) === billMonth)
-    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
 
   const expense = monthRecords.filter((r) => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
   const income = monthRecords.filter((r) => r.type === 'income').reduce((s, r) => s + r.amount, 0);
@@ -241,8 +179,6 @@ function renderBills() {
   });
 }
 
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
-
 // ===== 统计 =====
 function getRange(range) {
   const now = new Date();
@@ -266,7 +202,7 @@ function renderStats() {
   const expense = inRange.filter((r) => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
   const income = inRange.filter((r) => r.type === 'income').reduce((s, r) => s + r.amount, 0);
   const balance = income - expense;
-  const sceneLabel = settings && settings.scene === 'business' ? '毛利' : '结余';
+  const sceneLabel = currentUser && currentUser.scene === 'business' ? '毛利' : '结余';
 
   $('#summary-cards').innerHTML = `
     <div class="summary-card"><div class="s-label">收入</div><div class="s-value income">¥${fmtYuan(income)}</div></div>
@@ -316,35 +252,30 @@ function renderStats() {
 function renderBudget() {
   const box = $('#budget-box');
   const mk = monthKey(todayStr());
-  const budget = settings && settings.budgets ? settings.budgets[mk] : null;
   const spent = records.filter((r) => r.type === 'expense' && monthKey(r.date) === mk).reduce((s, r) => s + r.amount, 0);
 
   if (!budget) {
     box.innerHTML = `<div class="budget-nums">还没设置本月预算，去「我的 → 月度预算」设置一个吧 🌸</div>`;
     return;
   }
-  const pct = Math.min(100, Math.round(spent / budget * 100));
-  const over = spent > budget;
-  const remain = budget - spent;
+  const amount = budget.amount;
+  const pct = Math.min(100, Math.round(spent / amount * 100));
+  const over = spent > amount;
+  const remain = amount - spent;
   box.innerHTML = `
     <div class="budget-progress"><div class="budget-fill ${over ? 'over' : ''}" style="width:${pct}%"></div></div>
-    <div class="budget-nums">已花 <b>¥${fmtYuan(spent)}</b> / 预算 <b>¥${fmtYuan(budget)}</b></div>
+    <div class="budget-nums">已花 <b>¥${fmtYuan(spent)}</b> / 预算 <b>¥${fmtYuan(amount)}</b></div>
     ${over
       ? `<div class="budget-warn">⚠️ 已超支 ¥${fmtYuan(-remain)}</div>`
-      : (remain <= budget * 0.2 ? `<div class="budget-warn">⚠️ 剩余预算不足 20%</div>` : `<div class="budget-nums">剩余 ¥${fmtYuan(remain)}</div>`)}`;
+      : (remain <= amount * 0.2 ? `<div class="budget-warn">⚠️ 剩余预算不足 20%</div>` : `<div class="budget-nums">剩余 ¥${fmtYuan(remain)}</div>`)}`;
 }
 
 // ===== 我的 / 分类管理 =====
 function renderSettings() {
-  const session = getSession();
-  $('#user-desc').textContent = session ? session.username : '未登录';
-  const sceneName = settings && settings.scene === 'business' ? '经营 / 个体户' : '个人 / 家庭';
+  $('#user-desc').textContent = currentUser ? currentUser.username : '未登录';
+  const sceneName = currentUser && currentUser.scene === 'business' ? '经营 / 个体户' : '个人 / 家庭';
   $('#scene-desc').textContent = sceneName;
-
-  const mk = monthKey(todayStr());
-  const budget = settings && settings.budgets ? settings.budgets[mk] : null;
-  $('#budget-desc').textContent = budget ? `¥${fmtYuan(budget)} / 月` : '未设置';
-
+  $('#budget-desc').textContent = budget ? `¥${fmtYuan(budget.amount)} / 月` : '未设置';
   renderCategoryManage();
 }
 
@@ -374,7 +305,7 @@ function renderCategoryManage() {
   });
 }
 
-function deleteCategory(id) {
+async function deleteCategory(id) {
   const c = categories.find((x) => x.id === id);
   if (!c) return;
   if (c.isSystem && c.name === '其他') { toast('「其他」分类不可删除'); return; }
@@ -383,16 +314,17 @@ function deleteCategory(id) {
   if (linked.length > 0 && !other) { toast('缺少「其他」分类，无法转移'); return; }
   if (!confirm(`删除「${c.name}」？${linked.length ? `该分类下 ${linked.length} 笔流水将转移到「其他」` : ''}`)) return;
 
-  if (linked.length > 0) {
-    records = records.map((r) => (r.categoryId === id ? { ...r, categoryId: other.id } : r));
-    save(LS.records, records);
-  }
-  categories = categories.filter((x) => x.id !== id);
-  save(LS.categories, categories);
-  if (selectedCatId === id) selectedCatId = null;
-  renderSettings();
-  renderHome();
-  toast('已删除');
+  try {
+    await http.del('/categories/' + id);
+    // 服务端已转移流水并删除分类，重新同步
+    const [cats, recs] = await Promise.all([http.get('/categories'), http.get('/records')]);
+    categories = cats;
+    records = recs;
+    if (selectedCatId === id) selectedCatId = null;
+    renderSettings();
+    renderHome();
+    toast('已删除');
+  } catch (e) { toast(e.message); }
 }
 
 function openCategoryModal(id) {
@@ -440,23 +372,25 @@ function renderColorPicker() {
   });
 }
 
-function saveCategory() {
+async function saveCategory() {
   const name = $('#cat-name').value.trim();
   if (!name) { toast('请输入分类名称'); return; }
   const dup = categories.some((c) => c.name === name && c.type === catModalType && c.id !== editingCategoryId);
   if (dup) { toast('该分类已存在'); return; }
-
-  if (editingCategoryId) {
-    const c = categories.find((x) => x.id === editingCategoryId);
-    if (c) { c.name = name; c.type = catModalType; c.icon = catModalEmoji; c.color = catModalColor; }
-  } else {
-    categories.push({ id: uid(), name, type: catModalType, icon: catModalEmoji, color: catModalColor, sort: categories.length, isSystem: false });
-  }
-  save(LS.categories, categories);
-  $('#category-modal').classList.add('hidden');
-  renderSettings();
-  renderHome();
-  toast('已保存');
+  const payload = { name, type: catModalType, icon: catModalEmoji, color: catModalColor };
+  try {
+    if (editingCategoryId) {
+      const c = await http.put('/categories/' + editingCategoryId, payload);
+      categories = categories.map((x) => (x.id === editingCategoryId ? c : x));
+    } else {
+      const c = await http.post('/categories', payload);
+      categories.push(c);
+    }
+    $('#category-modal').classList.add('hidden');
+    renderSettings();
+    renderHome();
+    toast('已保存');
+  } catch (e) { toast(e.message); }
 }
 
 // ===== 记录编辑 =====
@@ -485,72 +419,61 @@ function renderEditCategoryGrid() {
   renderCategoryGrid($('#edit-category-grid'), cats, editSelectedCatId, (id) => { editSelectedCatId = id; });
 }
 
-function saveRecordEdit() {
+async function saveRecordEdit() {
   const fen = toFen($('#edit-amount').value);
   if (fen <= 0) { toast('请输入有效金额'); return; }
   if (!editSelectedCatId) { toast('请选择分类'); return; }
-  const r = records.find((x) => x.id === editingRecordId);
-  if (r) {
-    r.type = editType; r.amount = fen; r.categoryId = editSelectedCatId;
-    r.note = $('#edit-note').value.trim().slice(0, 50); r.date = $('#edit-date').value || todayStr();
-    save(LS.records, records);
-  }
-  $('#record-modal').classList.add('hidden');
-  renderBills();
-  toast('已保存');
+  try {
+    const r = await http.put('/records/' + editingRecordId, {
+      type: editType, amount: fen, categoryId: editSelectedCatId,
+      note: $('#edit-note').value.trim().slice(0, 50), date: $('#edit-date').value || todayStr()
+    });
+    records = records.map((x) => (x.id === editingRecordId ? r : x));
+    $('#record-modal').classList.add('hidden');
+    renderBills();
+    toast('已保存');
+  } catch (e) { toast(e.message); }
 }
 
-function deleteRecord() {
+async function deleteRecord() {
   if (!confirm('确定删除这笔流水？')) return;
-  records = records.filter((r) => r.id !== editingRecordId);
-  save(LS.records, records);
-  $('#record-modal').classList.add('hidden');
-  renderBills();
-  toast('已删除');
+  try {
+    await http.del('/records/' + editingRecordId);
+    records = records.filter((r) => r.id !== editingRecordId);
+    $('#record-modal').classList.add('hidden');
+    renderBills();
+    toast('已删除');
+  } catch (e) { toast(e.message); }
 }
 
 // ===== 场景 =====
-function initScene(scene, isFirst) {
-  if (isFirst) {
-    categories = buildTemplate(scene);
-    save(LS.categories, categories);
-  } else {
-    // 切换：合并缺失分类，不覆盖已有
-    let added = 0;
-    ['expense', 'income'].forEach((type) => {
-      TEMPLATES[scene][type].forEach((c) => {
-        if (!categories.some((x) => x.name === c.name && x.type === type)) {
-          categories.push({ id: uid(), name: c.name, type, icon: c.icon, color: c.color, sort: categories.length, isSystem: true });
-          added++;
-        }
-      });
-    });
-    save(LS.categories, categories);
-    toast(added ? `已加入 ${added} 个新分类` : '分类已是最新');
-  }
-  settings.scene = scene;
-  save(LS.settings, settings);
-  $('#onboarding').classList.add('hidden');
-  renderAll();
+async function initScene(scene) {
+  const wasFirst = !currentUser.scene;
+  try {
+    const data = await http.put('/user/scene', { scene });
+    currentUser.scene = data.scene;
+    categories = data.categories;
+    $('#onboarding').classList.add('hidden');
+    renderAll();
+    if (!wasFirst) toast('场景已切换');
+  } catch (e) { toast(e.message); }
 }
 
 // ===== 预算 =====
 function openBudgetModal() {
-  const mk = monthKey(todayStr());
-  const cur = settings.budgets ? settings.budgets[mk] : null;
-  $('#budget-amount').value = cur ? fmtYuan(cur) : '';
+  $('#budget-amount').value = budget ? fmtYuan(budget.amount) : '';
   $('#budget-modal').classList.remove('hidden');
   $('#budget-amount').focus();
 }
-function saveBudget() {
+async function saveBudget() {
   const fen = toFen($('#budget-amount').value);
   if (fen <= 0) { toast('请输入有效预算'); return; }
-  if (!settings.budgets) settings.budgets = {};
-  settings.budgets[monthKey(todayStr())] = fen;
-  save(LS.settings, settings);
-  $('#budget-modal').classList.add('hidden');
-  renderSettings();
-  toast('预算已设置');
+  try {
+    budget = await http.put('/budget', { month: monthKey(todayStr()), amount: fen });
+    $('#budget-modal').classList.add('hidden');
+    renderSettings();
+    toast('预算已设置');
+  } catch (e) { toast(e.message); }
 }
 
 // ===== 导出 =====
@@ -559,7 +482,7 @@ function exportCSV() {
   const header = ['类型', '金额(元)', '分类', '备注', '日期'];
   const rows = records
     .slice()
-    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
     .map((r) => {
       const c = categories.find((x) => x.id === r.categoryId);
       return [r.type === 'expense' ? '支出' : '收入', (r.amount / 100).toFixed(2), c ? c.name : '', r.note || '', r.date];
@@ -584,7 +507,7 @@ function renderAll() {
   renderSettings();
 }
 
-// ===== 认证（演示：纯前端模拟，无后端） =====
+// ===== 认证 =====
 function showAuthPage(mode) {
   $('#auth-login').classList.toggle('hidden', mode !== 'login');
   $('#auth-register').classList.toggle('hidden', mode !== 'register');
@@ -598,60 +521,78 @@ function showApp() {
   $('#auth-register').classList.add('hidden');
   $('.app').classList.remove('hidden');
 }
-function initAppAfterLogin() {
-  if (!settings || !settings.scene) {
-    // 首次使用
-    settings = { scene: null, lastCat: { expense: null, income: null }, budgets: {} };
-    $('#onboarding').classList.remove('hidden');
-  } else {
-    renderAll();
-  }
-}
-function enterApp(user) {
-  activeUserId = user.id;
-  loadUserData();
+
+function showLoading() { $('#loading').classList.remove('hidden'); }
+function hideLoading() { $('#loading').classList.add('hidden'); }
+
+// 登录/注册后加载数据并渲染（无场景则先选场景）
+async function enterApp() {
   showApp();
-  initAppAfterLogin();
+  showLoading();
+  try {
+    const mk = monthKey(todayStr());
+    const [cats, recs, bud] = await Promise.all([
+      http.get('/categories'),
+      http.get('/records'),
+      http.get('/budget?month=' + mk)
+    ]);
+    categories = cats;
+    records = recs;
+    budget = bud;
+    if (currentUser.scene) renderAll();
+    else $('#onboarding').classList.remove('hidden');
+  } catch (e) { toast(e.message); }
+  finally { hideLoading(); }
 }
-function doLogin() {
+
+async function doLogin() {
   const username = $('#login-username').value.trim();
   const password = $('#login-password').value;
   if (!username || !password) { toast('请输入用户名和密码'); return; }
-  const u = getUsers().find((x) => x.username === username && x.passwordHash === hashPwd(password));
-  if (!u) { toast('用户名或密码错误'); return; }
-  setSession(u, $('#login-remember').checked);
-  enterApp(u);
+  try {
+    const data = await http.post('/auth/login', { username, password });
+    setToken(data.token, $('#login-remember').checked);
+    currentUser = data.user;
+    await enterApp();
+  } catch (e) { toast(e.message); }
 }
-function doRegister() {
+
+async function doRegister() {
   const username = $('#reg-username').value.trim();
   const password = $('#reg-password').value;
   const password2 = $('#reg-password2').value;
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) { toast('用户名需 3-20 位字母/数字/下划线'); return; }
   if (password.length < 6 || password.length > 32) { toast('密码需 6-32 位'); return; }
   if (password !== password2) { toast('两次密码不一致'); return; }
-  if (getUsers().some((x) => x.username === username)) { toast('用户名已存在'); return; }
-  const u = { id: uid(), username, passwordHash: hashPwd(password), createdAt: Date.now() };
-  const users = getUsers(); users.push(u); saveUsers(users);
-  $('#reg-username').value = '';
-  $('#reg-password').value = '';
-  $('#reg-password2').value = '';
-  $('#login-username').value = username;
-  showAuthPage('login');
-  toast('注册成功，请登录');
+  try {
+    const data = await http.post('/auth/register', { username, password });
+    setToken(data.token, true); // 注册成功后自动登录
+    currentUser = data.user;
+    $('#reg-username').value = '';
+    $('#reg-password').value = '';
+    $('#reg-password2').value = '';
+    await enterApp();
+  } catch (e) { toast(e.message); }
 }
+
 function doLogout() {
   if (!confirm('确定退出登录？')) return;
-  clearSession();
-  activeUserId = null;
-  settings = null; categories = []; records = [];
+  clearToken();
+  currentUser = null;
+  categories = [];
+  records = [];
+  budget = null;
   $('#login-password').value = '';
   showAuth();
 }
 
 // ===== 初始化 =====
-function init() {
+async function init() {
   $('#date-input').value = todayStr();
   $('#edit-date').value = todayStr();
+
+  // 全局 401：清空状态并跳回登录
+  setUnauthorizedHandler(() => { currentUser = null; showAuth(); });
 
   // 底部导航
   $$('.tab').forEach((t) => {
@@ -684,7 +625,7 @@ function init() {
 
   // 场景选择（首次 & 切换）
   $$('.scene-card').forEach((b) => {
-    b.onclick = () => initScene(b.dataset.scene, !settings.scene);
+    b.onclick = () => initScene(b.dataset.scene);
   });
 
   // 记录编辑弹窗
@@ -722,20 +663,22 @@ function init() {
   $('#login-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
   $('#reg-password2').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
 
-  // 登录门禁
-  const session = getSession();
-  if (!session) { showAuth(); return; }
-  activeUserId = session.id;
-  loadUserData();
-  showApp();
-  initAppAfterLogin();
+  // 登录门禁：有 token 则自动恢复会话
+  if (!getToken()) { showAuth(); return; }
+  try {
+    currentUser = await http.get('/user/me');
+    await enterApp();
+  } catch (e) {
+    if (getToken()) toast(e.message);
+    showAuth();
+  }
 }
 
 function setHomeType(type) {
   homeType = type;
   $('#type-expense').classList.toggle('active', type === 'expense');
   $('#type-income').classList.toggle('active', type === 'income');
-  const last = settings.lastCat[type];
+  const last = lastCatId(type);
   selectedCatId = (categories.find((c) => c.id === last)) ? last : null;
   renderHome();
 }

@@ -99,6 +99,8 @@ html, body {
   gap: 10px;
   margin-bottom: 16px;
 }
+.category-count { font-size: 12px; color: var(--ink-sub); margin-bottom: 8px; }
+.empty-hint { padding: 22px 0; text-align: center; color: var(--ink-sub); font-size: 13px; }
 .cat-item {
   background: #fff;
   border: 2px solid transparent;
@@ -372,6 +374,17 @@ html, body {
 /* 保存动效 */
 @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
 .pop { animation: pop .3s ease; }
+
+/* ===== 加载态 ===== */
+.loading-overlay { flex-direction: column; gap: 14px; background: rgba(255, 247, 249, .92); z-index: 300; }
+.spinner {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 4px solid var(--pink-light);
+  border-top-color: var(--pink-deep);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 14px; color: var(--ink-sub); }
 
 /* ===== 登录 / 注册（演示） ===== */
 .app.hidden { display: none; }

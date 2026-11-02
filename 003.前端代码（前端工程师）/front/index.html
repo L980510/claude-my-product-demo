@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- 登录页（演示：纯前端模拟，无真实后端） -->
+  <!-- 登录页 -->
   <section id="auth-login" class="auth-view hidden">
     <div class="auth-card">
       <div class="auth-logo">🌸</div>
@@ -23,7 +23,7 @@
     </div>
   </section>
 
-  <!-- 注册页（演示：纯前端模拟，无真实后端） -->
+  <!-- 注册页 -->
   <section id="auth-register" class="auth-view hidden">
     <div class="auth-card">
       <div class="auth-logo">🌸</div>
@@ -57,6 +57,7 @@
       </div>
       <div class="quick-hint">支持「28 午餐」快捷输入，金额 + 备注一步搞定</div>
 
+      <div id="category-count" class="category-count"></div>
       <div id="category-grid" class="category-grid"></div>
 
       <div class="meta-row">
@@ -151,7 +152,7 @@
         <button id="add-category-btn" class="btn-ghost add-cat">＋ 新增分类</button>
       </div>
 
-      <div class="about">消费记账 · V1 演示版 · 登录为前端模拟，无真实后端</div>
+      <div class="about">消费记账 · V1 · 已接入后端服务</div>
     </section>
 
     <!-- 底部导航 -->
@@ -251,7 +252,13 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <div id="loading" class="overlay loading-overlay hidden">
+    <div class="spinner"></div>
+    <div class="loading-text">加载中…</div>
+  </div>
+
   <script src="charts.js"></script>
+  <script src="api.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

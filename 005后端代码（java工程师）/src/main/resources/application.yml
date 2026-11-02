@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: xjz-backend
+  autoconfigure:
+    # 关闭 Security 默认内存用户，避免启动打印随机密码日志
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 连接 Docker 中的 MySQL 8.4（宿主机 3307 端口，数据库 xjz）
+    url: jdbc:mysql://127.0.0.1:3307/xjz?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: "123456"
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期打印 SQL，生产环境请移除
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+# JWT 配置（仅本地开发；生产请改为强随机密钥并外部化，长度需 >= 32 字节）
+jwt:
+  secret: "xjz-backend-dev-secret-key-please-change-in-production-0123456789abcdefghijklmnopqrstuvwxyz"
+  expire-days: 30
